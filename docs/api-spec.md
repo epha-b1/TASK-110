@@ -1092,15 +1092,30 @@ paths:
                   format: date
                 groupBy:
                   type: string
+                  enum: [day, week, month]
                 format:
                   type: string
                   enum: [csv, excel]
+                roomType:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  description: |
+                    Optional room-type filter mirroring the GET
+                    `/reports/{occupancy,adr,revpar}?roomType=...` query
+                    parameter. When present, the exported rows are
+                    restricted to rooms whose `room_type` matches exactly.
+                    Applies to `occupancy`, `adr`, and `revpar` only;
+                    ignored for `revenue_mix` because that report already
+                    partitions by `room_type` when `groupBy=room_type`.
                 includePii:
                   type: boolean
                   default: false
       responses:
         "200":
           description: Export file download URL
+        "400":
+          description: Validation error (e.g. empty or oversized roomType)
         "403":
           description: PII export not permitted
 
@@ -1514,10 +1529,56 @@ paths:
               schema:
                 type: string
 
-  /exports/{id}:
+  /exports/{filename}:
     get:
       tags: [Exports]
-      summary: Download export archive
+      summary: Download a previously generated export archive
+      description: |
+        Strict ownership gate. The caller must be authenticated and must
+        either be the user who created the export or a hotel_admin. The
+        `:filename` path parameter is the exact filename returned in the
+        `downloadUrl` field of `/reports/export` and `/accounts/me/export`
+        responses (e.g. `report-adr-<uuid>.csv`, `export-<userId>-<uuid>.zip`).
+      parameters:
+        - in: path
+          name: filename
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: File download
+        "403":
+          description: Caller does not own the export
+        "404":
+          description: Export not found or expired
+
+  /users:
+    get:
+      tags: [Users]
+      summary: List all users (Hotel Admin only)
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        "200":
+          description: Paginated user list
+        "403":
+          description: Requires hotel_admin
+
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: Get user by id (Hotel Admin only)
       parameters:
         - in: path
           name: id
@@ -1527,73 +1588,62 @@ paths:
             format: uuid
       responses:
         "200":
-          description: File download
+          description: User
         "404":
-          description: Export not found or expired
-        "403":
-          description: Not your export
-
-  /accounts/{userId}/role:
+          description: Not found
     patch:
-      tags: [Accounts]
-      summary: Assign role to user (Hotel Admin only)
+      tags: [Users]
+      summary: Update user fields — role / status / property / PII flag (Hotel Admin only)
       parameters:
         - in: path
-          name: userId
+          name: id
           required: true
           schema:
             type: string
             format: uuid
       requestBody:
-        required: true
         content:
           application/json:
             schema:
               type: object
-              required: [role]
               properties:
                 role:
                   type: string
                   enum: [hotel_admin, manager, analyst, member]
+                status:
+                  type: string
+                  enum: [active, suspended, deleted]
                 propertyId:
                   type: string
                   format: uuid
-                  description: Required when role is manager
                 piiExportAllowed:
                   type: boolean
       responses:
         "200":
-          description: Role updated
-        "403":
-          description: Not Hotel Admin
-
-  /metrics:
-    get:
-      tags: [Metrics]
-      summary: Get operational metrics (Hotel Admin only)
+          description: Updated
+        "404":
+          description: Not found
+    delete:
+      tags: [Users]
+      summary: Soft-delete user (Hotel Admin only)
       parameters:
-        - in: query
-          name: metricName
+        - in: path
+          name: id
+          required: true
           schema:
             type: string
-        - in: query
-          name: from
-          schema:
-            type: string
-            format: date-time
-        - in: query
-          name: to
-          schema:
-            type: string
-            format: date-time
+            format: uuid
       responses:
-        "200":
-          description: Metrics
+        "204":
+          description: Deleted
+        "409":
+          description: Cannot delete own account via admin route
 
 tags:
   - name: Health
   - name: Auth
   - name: Accounts
+  - name: Users
   - name: Groups
   - name: Itineraries
   - name: Files
@@ -1604,4 +1654,3 @@ tags:
   - name: Quality
   - name: Audit
   - name: Exports
-  - name: Metrics

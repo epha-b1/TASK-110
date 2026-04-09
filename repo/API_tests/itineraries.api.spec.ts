@@ -442,4 +442,138 @@ describeDb('Slice 5 — Itineraries API', () => {
       expect(itemC.body.notes).toBe('outsider notes C');
     });
   });
+
+  // ─── Update idempotency scoping — per-resource isolation (audit fix) ─
+  //
+  // Previously the update flow scoped idempotency by (key, actor_id,
+  // operation) — it did not include the itinerary item id. That meant
+  // the same actor reusing the same key to update a DIFFERENT item
+  // either (a) hit the unique index and failed, or (b) matched the
+  // earlier item's stored response and replayed it against the wrong
+  // resource. Fixed by adding resource_id to both the index and the
+  // service lookup (see migration 019 and idempotency.service.ts).
+  describe('Update idempotency scoping — cross-resource isolation', () => {
+    test('same key used to update TWO DIFFERENT items → both updates succeed independently', async () => {
+      const g = await request(app).post('/groups')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Update Iso ${RUN_ID}` });
+      const isoGroupId: string = g.body.id;
+
+      // Create two distinct items in the same group under admin
+      const itemOne = await request(app)
+        .post(`/groups/${isoGroupId}/itineraries`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          title: 'Item One',
+          meetupDate: '09/01/2026', meetupTime: '8:00 AM', meetupLocation: 'Loc 1',
+          idempotencyKey: `upd-iso-create-1-${RUN_ID}`,
+        });
+      expect(itemOne.status).toBe(201);
+
+      const itemTwo = await request(app)
+        .post(`/groups/${isoGroupId}/itineraries`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          title: 'Item Two',
+          meetupDate: '09/02/2026', meetupTime: '9:00 AM', meetupLocation: 'Loc 2',
+          idempotencyKey: `upd-iso-create-2-${RUN_ID}`,
+        });
+      expect(itemTwo.status).toBe(201);
+      expect(itemTwo.body.id).not.toBe(itemOne.body.id);
+
+      // Use the SAME update idempotency key against BOTH items. Under
+      // the old scope the second PATCH would either 409 or replay the
+      // first item's response. With resource-scoped idempotency both
+      // updates succeed and apply the caller's new data.
+      const sharedUpdateKey = `shared-update-key-${RUN_ID}`;
+
+      const updOne = await request(app)
+        .patch(`/groups/${isoGroupId}/itineraries/${itemOne.body.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ title: 'Item One updated', idempotencyKey: sharedUpdateKey });
+      expect(updOne.status).toBe(200);
+      expect(updOne.body.title).toBe('Item One updated');
+      expect(updOne.body.id).toBe(itemOne.body.id);
+
+      const updTwo = await request(app)
+        .patch(`/groups/${isoGroupId}/itineraries/${itemTwo.body.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ title: 'Item Two updated', idempotencyKey: sharedUpdateKey });
+      expect(updTwo.status).toBe(200);
+      expect(updTwo.body.title).toBe('Item Two updated');
+      expect(updTwo.body.id).toBe(itemTwo.body.id);
+
+      // Cross-check: the first item's title was NOT overwritten by the
+      // second update (i.e. no accidental merge).
+      const getOne = await request(app)
+        .get(`/groups/${isoGroupId}/itineraries/${itemOne.body.id}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(getOne.status).toBe(200);
+      expect(getOne.body.title).toBe('Item One updated');
+    });
+
+    test('same key + same item + SAME body → replays stored response (no extra write)', async () => {
+      const g = await request(app).post('/groups')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Update Replay ${RUN_ID}` });
+      const groupId2: string = g.body.id;
+
+      const created = await request(app)
+        .post(`/groups/${groupId2}/itineraries`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          title: 'Replay Target',
+          meetupDate: '09/10/2026', meetupTime: '8:00 AM', meetupLocation: 'Loc',
+          idempotencyKey: `upd-replay-create-${RUN_ID}`,
+        });
+      expect(created.status).toBe(201);
+
+      const updKey = `upd-replay-key-${RUN_ID}`;
+      const first = await request(app)
+        .patch(`/groups/${groupId2}/itineraries/${created.body.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ title: 'First update', idempotencyKey: updKey });
+      expect(first.status).toBe(200);
+
+      const replay = await request(app)
+        .patch(`/groups/${groupId2}/itineraries/${created.body.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ title: 'First update', idempotencyKey: updKey });
+      expect(replay.status).toBe(200);
+      // Replayed response mirrors the stored one.
+      expect(replay.body.id).toBe(first.body.id);
+      expect(replay.body.title).toBe('First update');
+    });
+
+    test('same key + same item + DIFFERENT body → 409 IDEMPOTENCY_CONFLICT', async () => {
+      const g = await request(app).post('/groups')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Update Conflict ${RUN_ID}` });
+      const groupId3: string = g.body.id;
+
+      const created = await request(app)
+        .post(`/groups/${groupId3}/itineraries`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          title: 'Conflict Target',
+          meetupDate: '09/20/2026', meetupTime: '8:00 AM', meetupLocation: 'Loc',
+          idempotencyKey: `upd-conflict-create-${RUN_ID}`,
+        });
+      expect(created.status).toBe(201);
+
+      const updKey = `upd-conflict-key-${RUN_ID}`;
+      const first = await request(app)
+        .patch(`/groups/${groupId3}/itineraries/${created.body.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ title: 'First update', idempotencyKey: updKey });
+      expect(first.status).toBe(200);
+
+      const conflict = await request(app)
+        .patch(`/groups/${groupId3}/itineraries/${created.body.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ title: 'Second update with different body', idempotencyKey: updKey });
+      expect(conflict.status).toBe(409);
+      expect(conflict.body.code).toBe('IDEMPOTENCY_CONFLICT');
+    });
+  });
 });

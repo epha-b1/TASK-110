@@ -173,4 +173,27 @@ describe('reportExportSchema', () => {
   test('rejects non-boolean includePii', () => {
     expect(() => reportExportSchema.parse({ ...valid, includePii: 'yes' as any })).toThrow();
   });
+
+  // ─── roomType (new): schema must mirror reportQuerySchema ────────
+  test('accepts optional roomType', () => {
+    expect(() => reportExportSchema.parse({ ...valid, roomType: 'standard' })).not.toThrow();
+    expect(() => reportExportSchema.parse({ ...valid, roomType: 'x'.repeat(100) })).not.toThrow();
+  });
+
+  test('absent roomType is allowed (it is optional)', () => {
+    const parsed = reportExportSchema.parse(valid) as Record<string, unknown>;
+    expect(parsed.roomType).toBeUndefined();
+  });
+
+  test('rejects empty roomType', () => {
+    expect(() => reportExportSchema.parse({ ...valid, roomType: '' })).toThrow();
+  });
+
+  test('rejects roomType longer than 100 chars', () => {
+    expect(() => reportExportSchema.parse({ ...valid, roomType: 'x'.repeat(101) })).toThrow();
+  });
+
+  test('rejects non-string roomType', () => {
+    expect(() => reportExportSchema.parse({ ...valid, roomType: 7 as any })).toThrow();
+  });
 });

@@ -109,6 +109,11 @@ export const reportExportSchema = z
     format: reportFormat,
     groupBy: reportGroupBy.optional(),
     propertyId: propertyIdSchema.optional(),
+    // roomType mirrors the constraint used in reportQuerySchema so the
+    // KPI endpoints (/reports/adr, /reports/revpar, /reports/occupancy)
+    // and /reports/export agree on what a "room type" is. Optional —
+    // absent means "all room types" (same semantics as the GET path).
+    roomType: z.string().min(1).max(100).optional(),
     includePii: z.boolean().optional(),
   })
   .refine((v) => v.from <= v.to, {

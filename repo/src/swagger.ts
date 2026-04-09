@@ -219,7 +219,7 @@ export const openApiSpec = {
       responses: ok(),
     }),
     '/reports/export': endpoint('post', 'Reports', 'Export report as CSV or Excel', {
-      requestBody: { required: true, content: { 'application/json': { schema: obj({ reportType: str, from: date, to: date, format: str, groupBy: str, propertyId: str, includePii: bool }) } } },
+      requestBody: { required: true, content: { 'application/json': { schema: obj({ reportType: str, from: date, to: date, format: str, groupBy: str, propertyId: str, roomType: str, includePii: bool }) } } },
       responses: { ...ok(), ...r403 },
     }),
     '/reports/staffing': endpoint('get', 'Reports', 'Staffing report', {

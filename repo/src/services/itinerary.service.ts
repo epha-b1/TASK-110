@@ -169,8 +169,12 @@ export async function updateItem(groupId: string, itemId: string, userId: string
   await assertGroupMember(groupId, userId);
   validateItem(data);
 
-  // Update idempotency: replay stored response if same key+body
-  const replay = await checkIdempotency(data.idempotencyKey, userId, 'update_itinerary', data);
+  // Update idempotency: scope is (key, actor, operation, resource_id).
+  // `itemId` MUST be part of the lookup so the same idempotency key can
+  // be reused by the same caller against a different itinerary item
+  // without colliding with an earlier update of this item. See the
+  // audit note in src/services/idempotency.service.ts.
+  const replay = await checkIdempotency(data.idempotencyKey, userId, 'update_itinerary', itemId, data);
   if (replay) return replay as ItineraryItem;
 
   const item = await ItineraryItem.findOne({ where: { id: itemId, group_id: groupId } });

@@ -67,7 +67,7 @@ export async function revenueMix(req: AuthenticatedRequest, res: Response, next:
 export async function exportReport(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const scope = getManagerScope(req);
-    const { reportType, from, to, format, groupBy, propertyId, includePii } = req.body;
+    const { reportType, from, to, format, groupBy, propertyId, roomType, includePii } = req.body;
 
     if (includePii) {
       const { User } = require('../models/user.model');
@@ -75,11 +75,16 @@ export async function exportReport(req: AuthenticatedRequest, res: Response, nex
       if (!user?.pii_export_allowed) throw new AppError(403, 'FORBIDDEN', 'PII export not permitted');
     }
 
+    // `roomType` is intentionally forwarded only to the room-night KPIs
+    // (occupancy/adr/revpar). `revenue_mix` already partitions by
+    // `rm.room_type` when `groupBy=room_type`, so layering a roomType
+    // filter on top would collapse the partition — preserve existing
+    // behavior there.
     let data: unknown[];
     switch (reportType) {
-      case 'occupancy': data = await reportingService.occupancy({ propertyId, from, to, groupBy }, scope); break;
-      case 'adr': data = await reportingService.adr({ propertyId, from, to, groupBy }, scope); break;
-      case 'revpar': data = await reportingService.revpar({ propertyId, from, to, groupBy }, scope); break;
+      case 'occupancy': data = await reportingService.occupancy({ propertyId, from, to, groupBy, roomType }, scope); break;
+      case 'adr': data = await reportingService.adr({ propertyId, from, to, groupBy, roomType }, scope); break;
+      case 'revpar': data = await reportingService.revpar({ propertyId, from, to, groupBy, roomType }, scope); break;
       case 'revenue_mix': data = await reportingService.revenueMix({ propertyId, from, to, groupBy }, scope); break;
       default: throw new AppError(400, 'VALIDATION_ERROR', 'Invalid reportType');
     }
@@ -117,7 +122,7 @@ export async function exportReport(req: AuthenticatedRequest, res: Response, nex
       action: 'report_export',
       resource_type: 'report',
       resource_id: exportId,
-      detail: { reportType, from, to, format, groupBy, propertyId, includePii: !!includePii, rowCount: rows.length },
+      detail: { reportType, from, to, format, groupBy, propertyId, roomType, includePii: !!includePii, rowCount: rows.length },
       trace_id: traceStore.getStore()?.traceId || null,
       ip_address: req.ip || null,
       created_at: new Date(),

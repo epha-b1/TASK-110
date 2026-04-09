@@ -65,8 +65,8 @@ Solution: Use opaque cursor encoding `{created_at,id}` (base64 JSON). Query with
 
 ## 13) Data Export Archive — What Format?
 Question: The prompt says account data export packages profile, activity logs, and uploaded files into a "locally generated archive." What format?
-My Understanding/Hypothesis: ZIP archive containing: `profile.json` (user profile), `activity_logs.json` (all activity log entries), `files/` directory with copies of uploaded files. Archive is stored in `exports/` directory and served via a time-limited local URL.
-Solution: Node.js `archiver` library creates the ZIP. Archive expires and is deleted after 24 hours by the cleanup job. Download URL is a local API endpoint: `GET /exports/:archiveId`.
+My Understanding/Hypothesis: ZIP archive containing: `profile.json` (user profile), `activity.json` (all activity log entries), `files/` directory with copies of uploaded files. Archive is stored in `exports/` directory and served via a time-limited local URL.
+Solution: Node.js `archiver` library creates the ZIP. Archive expires and is deleted after 24 hours by the cleanup job. Download URL is a local API endpoint served by the ownership-checked route `GET /exports/:filename`, where `:filename` is the generated archive filename returned in the export response (see `src/services/auth.service.ts` and `src/app.ts`).
 
 ## 14) Staffing Import — What Columns Are Required?
 Question: The prompt says strict column validation for staffing and evaluation imports. What are the required columns?
