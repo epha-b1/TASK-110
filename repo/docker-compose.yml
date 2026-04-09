@@ -49,6 +49,20 @@ services:
 
   db:
     image: mysql:8
+    # `--log-bin-trust-function-creators=1` is required so migration 017
+    # (which creates the audit_logs immutability triggers) can run as
+    # the non-SUPER `hospitality` user. MySQL 8 has binary logging
+    # enabled by default; without this flag the trigger CREATE is
+    # rejected with:
+    #
+    #   "You do not have the SUPER privilege and binary logging is
+    #    enabled (you *might* want to use the less safe
+    #    log_bin_trust_function_creators variable)"
+    #
+    # The flag is passed through docker-entrypoint.sh to mysqld as a
+    # startup option, so it is active from the very first boot and
+    # does not require a manual SET GLOBAL by a privileged user.
+    command: --log-bin-trust-function-creators=1
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_USER: hospitality
