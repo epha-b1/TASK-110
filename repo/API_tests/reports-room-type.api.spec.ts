@@ -104,7 +104,7 @@ describeDb('Reports roomType filter — ADR/RevPAR', () => {
 
   test('GET /reports/adr — no roomType: blended ADR across room types', async () => {
     const res = await request(app)
-      .get(`/reports/adr?from=${FROM}&to=${TO}&propertyId=${PROP_ID}`)
+      .get(`/reports/adr?from=${FROM}&to=${TO}&groupBy=month&propertyId=${PROP_ID}`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     const row = (res.body as any[])[0];
@@ -115,7 +115,7 @@ describeDb('Reports roomType filter — ADR/RevPAR', () => {
 
   test('GET /reports/adr?roomType=standard — only standard revenue/nights', async () => {
     const res = await request(app)
-      .get(`/reports/adr?from=${FROM}&to=${TO}&propertyId=${PROP_ID}&roomType=standard`)
+      .get(`/reports/adr?from=${FROM}&to=${TO}&groupBy=month&propertyId=${PROP_ID}&roomType=standard`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     const row = (res.body as any[])[0];
@@ -127,7 +127,7 @@ describeDb('Reports roomType filter — ADR/RevPAR', () => {
 
   test('GET /reports/adr?roomType=deluxe — only deluxe revenue/nights', async () => {
     const res = await request(app)
-      .get(`/reports/adr?from=${FROM}&to=${TO}&propertyId=${PROP_ID}&roomType=deluxe`)
+      .get(`/reports/adr?from=${FROM}&to=${TO}&groupBy=month&propertyId=${PROP_ID}&roomType=deluxe`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     const row = (res.body as any[])[0];
@@ -139,7 +139,7 @@ describeDb('Reports roomType filter — ADR/RevPAR', () => {
 
   test('GET /reports/adr?roomType=nonexistent — empty result set', async () => {
     const res = await request(app)
-      .get(`/reports/adr?from=${FROM}&to=${TO}&propertyId=${PROP_ID}&roomType=penthouse`)
+      .get(`/reports/adr?from=${FROM}&to=${TO}&groupBy=month&propertyId=${PROP_ID}&roomType=penthouse`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
@@ -150,7 +150,7 @@ describeDb('Reports roomType filter — ADR/RevPAR', () => {
 
   test('GET /reports/revpar — no roomType: blended RevPAR across room types', async () => {
     const res = await request(app)
-      .get(`/reports/revpar?from=${FROM}&to=${TO}&propertyId=${PROP_ID}`)
+      .get(`/reports/revpar?from=${FROM}&to=${TO}&groupBy=month&propertyId=${PROP_ID}`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     const row = (res.body as any[])[0];
@@ -162,7 +162,7 @@ describeDb('Reports roomType filter — ADR/RevPAR', () => {
 
   test('GET /reports/revpar?roomType=standard — only standard availability/revenue', async () => {
     const res = await request(app)
-      .get(`/reports/revpar?from=${FROM}&to=${TO}&propertyId=${PROP_ID}&roomType=standard`)
+      .get(`/reports/revpar?from=${FROM}&to=${TO}&groupBy=month&propertyId=${PROP_ID}&roomType=standard`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     const row = (res.body as any[])[0];
@@ -176,7 +176,7 @@ describeDb('Reports roomType filter — ADR/RevPAR', () => {
 
   test('GET /reports/revpar?roomType=deluxe — only deluxe availability/revenue', async () => {
     const res = await request(app)
-      .get(`/reports/revpar?from=${FROM}&to=${TO}&propertyId=${PROP_ID}&roomType=deluxe`)
+      .get(`/reports/revpar?from=${FROM}&to=${TO}&groupBy=month&propertyId=${PROP_ID}&roomType=deluxe`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     const row = (res.body as any[])[0];
@@ -190,7 +190,7 @@ describeDb('Reports roomType filter — ADR/RevPAR', () => {
 
   test('GET /reports/revpar?roomType=nonexistent — empty result set', async () => {
     const res = await request(app)
-      .get(`/reports/revpar?from=${FROM}&to=${TO}&propertyId=${PROP_ID}&roomType=penthouse`)
+      .get(`/reports/revpar?from=${FROM}&to=${TO}&groupBy=month&propertyId=${PROP_ID}&roomType=penthouse`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);

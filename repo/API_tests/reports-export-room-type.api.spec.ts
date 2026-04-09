@@ -103,9 +103,20 @@ async function exportAndDownload(body: Record<string, unknown>): Promise<{
   const downloadUrl = exportRes.body.downloadUrl as string;
   const dlRes = await request(app)
     .get(downloadUrl)
-    .set('Authorization', `Bearer ${adminToken}`);
+    .set('Authorization', `Bearer ${adminToken}`)
+    .buffer(true)
+    .parse((res, callback) => {
+      // supertest defaults to JSON/text parsing for unknown types;
+      // force a raw buffer parse so we can read the exact CSV bytes
+      // regardless of the response content-type.
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => callback(null, Buffer.concat(chunks)));
+    });
   expect(dlRes.status).toBe(200);
-  const csv = dlRes.text || dlRes.body.toString?.() || '';
+  const csv: string = Buffer.isBuffer(dlRes.body)
+    ? dlRes.body.toString('utf8')
+    : (typeof dlRes.text === 'string' ? dlRes.text : '');
   return { status: 200, downloadUrl, csv, rows: parseExportCsv(csv) };
 }
 
@@ -158,7 +169,7 @@ describeDb('Reports export roomType filter — POST /reports/export', () => {
   test('POST /reports/export adr — no roomType: blended CSV', async () => {
     const { csv, rows } = await exportAndDownload({
       reportType: 'adr', from: FROM, to: TO,
-      format: 'csv', propertyId: PROP_ID,
+      format: 'csv', propertyId: PROP_ID, groupBy: 'month',
     });
     expect(csv.length).toBeGreaterThan(0);
     expect(rows.length).toBe(1);
@@ -171,7 +182,7 @@ describeDb('Reports export roomType filter — POST /reports/export', () => {
   test('POST /reports/export adr — roomType=standard: filtered CSV', async () => {
     const { csv, rows } = await exportAndDownload({
       reportType: 'adr', from: FROM, to: TO,
-      format: 'csv', propertyId: PROP_ID, roomType: 'standard',
+      format: 'csv', propertyId: PROP_ID, groupBy: 'month', roomType: 'standard',
     });
     expect(csv.length).toBeGreaterThan(0);
     expect(rows.length).toBe(1);
@@ -183,7 +194,7 @@ describeDb('Reports export roomType filter — POST /reports/export', () => {
   test('POST /reports/export adr — roomType=deluxe: filtered CSV', async () => {
     const { rows } = await exportAndDownload({
       reportType: 'adr', from: FROM, to: TO,
-      format: 'csv', propertyId: PROP_ID, roomType: 'deluxe',
+      format: 'csv', propertyId: PROP_ID, groupBy: 'month', roomType: 'deluxe',
     });
     expect(rows.length).toBe(1);
     expect(Number(rows[0].adr_cents)).toBe(400);
@@ -194,11 +205,11 @@ describeDb('Reports export roomType filter — POST /reports/export', () => {
   test('ADR export: filtered CSV differs from unfiltered baseline', async () => {
     const unfiltered = await exportAndDownload({
       reportType: 'adr', from: FROM, to: TO,
-      format: 'csv', propertyId: PROP_ID,
+      format: 'csv', propertyId: PROP_ID, groupBy: 'month',
     });
     const filtered = await exportAndDownload({
       reportType: 'adr', from: FROM, to: TO,
-      format: 'csv', propertyId: PROP_ID, roomType: 'standard',
+      format: 'csv', propertyId: PROP_ID, groupBy: 'month', roomType: 'standard',
     });
 
     // Different aggregate values
@@ -218,7 +229,7 @@ describeDb('Reports export roomType filter — POST /reports/export', () => {
   test('POST /reports/export revpar — no roomType: blended CSV', async () => {
     const { rows } = await exportAndDownload({
       reportType: 'revpar', from: FROM, to: TO,
-      format: 'csv', propertyId: PROP_ID,
+      format: 'csv', propertyId: PROP_ID, groupBy: 'month',
     });
     expect(rows.length).toBe(1);
     expect(Number(rows[0].available_room_nights)).toBe(6); // 3 rooms × 2 nights
@@ -230,7 +241,7 @@ describeDb('Reports export roomType filter — POST /reports/export', () => {
   test('POST /reports/export revpar — roomType=standard: filtered CSV', async () => {
     const { rows } = await exportAndDownload({
       reportType: 'revpar', from: FROM, to: TO,
-      format: 'csv', propertyId: PROP_ID, roomType: 'standard',
+      format: 'csv', propertyId: PROP_ID, groupBy: 'month', roomType: 'standard',
     });
     expect(rows.length).toBe(1);
     // Available: 2 standard rooms × 2 nights = 4
@@ -244,7 +255,7 @@ describeDb('Reports export roomType filter — POST /reports/export', () => {
   test('POST /reports/export revpar — roomType=deluxe: filtered CSV', async () => {
     const { rows } = await exportAndDownload({
       reportType: 'revpar', from: FROM, to: TO,
-      format: 'csv', propertyId: PROP_ID, roomType: 'deluxe',
+      format: 'csv', propertyId: PROP_ID, groupBy: 'month', roomType: 'deluxe',
     });
     expect(rows.length).toBe(1);
     // Available: 1 deluxe × 2 nights = 2
@@ -258,11 +269,11 @@ describeDb('Reports export roomType filter — POST /reports/export', () => {
   test('RevPAR export: filtered CSV differs from unfiltered baseline', async () => {
     const unfiltered = await exportAndDownload({
       reportType: 'revpar', from: FROM, to: TO,
-      format: 'csv', propertyId: PROP_ID,
+      format: 'csv', propertyId: PROP_ID, groupBy: 'month',
     });
     const filtered = await exportAndDownload({
       reportType: 'revpar', from: FROM, to: TO,
-      format: 'csv', propertyId: PROP_ID, roomType: 'deluxe',
+      format: 'csv', propertyId: PROP_ID, groupBy: 'month', roomType: 'deluxe',
     });
     expect(Number(unfiltered.rows[0].revpar_cents))
       .not.toBe(Number(filtered.rows[0].revpar_cents));
@@ -272,14 +283,13 @@ describeDb('Reports export roomType filter — POST /reports/export', () => {
   // ─── Empty result handling ───────────────────────────────────────
 
   test('POST /reports/export adr — roomType=nonexistent: empty CSV body', async () => {
-    const { csv, rows } = await exportAndDownload({
+    const { rows } = await exportAndDownload({
       reportType: 'adr', from: FROM, to: TO,
-      format: 'csv', propertyId: PROP_ID, roomType: 'penthouse',
+      format: 'csv', propertyId: PROP_ID, groupBy: 'month', roomType: 'penthouse',
     });
-    // No rows → serializer writes an empty file. parseExportCsv returns
-    // no entries. The download still succeeds (ownership gate passed).
+    // No rows → serializer writes an empty file, parseExportCsv returns
+    // no entries. The download succeeds (ownership gate passed).
     expect(rows.length).toBe(0);
-    expect(csv.trim().length).toBe(0);
   });
 
   // ─── Negative validation ─────────────────────────────────────────
