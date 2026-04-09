@@ -105,7 +105,23 @@ app.use((_req: Request, _res: Response, next: NextFunction) => {
   next(new AppError(404, 'NOT_FOUND', 'Resource not found'));
 });
 
-// Global error handler
+// Global error handler.
+//
+// AppError is the structured error path — pass message + code through.
+// Anything else is an unhandled exception. We log it through the
+// system logger with the traceId so support can correlate, but in
+// production we strip the stack and the raw error message from both
+// the log line and the response body. This avoids leaking SQL
+// fragments, file paths, secrets that may have ended up inside an
+// exception message, or stack traces that disclose internals.
+//
+// In non-production we keep the full stack so developers can debug.
+//
+// Audit-log masking is unaffected — masking happens before the logger
+// in audit.controller, and the system logger does NOT touch
+// audit_logs.
+const isProd = process.env.NODE_ENV === 'production';
+
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   const traceId = traceStore.getStore()?.traceId || 'unknown';
 
@@ -119,15 +135,22 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     return;
   }
 
+  // Unhandled — log with sanitization in production
   systemLogger.error('unhandled_error', {
-    error: err.message,
-    stack: err.stack,
+    traceId,
+    errorClass: err.constructor?.name || 'Error',
+    // Keep the raw message in dev/test for debugging; in prod we
+    // emit only the class name + traceId, since arbitrary error
+    // messages can carry sensitive payload data.
+    ...(isProd ? {} : { error: err.message, stack: err.stack }),
   });
 
   res.status(500).json({
     statusCode: 500,
     code: 'INTERNAL_ERROR',
-    message: 'Internal server error',
+    // Generic body in production. Dev/test surfaces the underlying
+    // message to make tests and local debugging easy.
+    message: isProd ? 'Internal server error' : (err.message || 'Internal server error'),
     traceId,
   });
 });

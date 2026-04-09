@@ -76,6 +76,32 @@ describeDb('Slice 8 — Reports API', () => {
     expect(res.status).toBe(200);
   });
 
+  // ─── Validation middleware (audit fix) ─────────────────────────────
+  test('GET /reports/occupancy 400 — missing from/to', async () => {
+    const res = await request(app).get('/reports/occupancy').set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('GET /reports/occupancy 400 — bad date format', async () => {
+    const res = await request(app).get('/reports/occupancy?from=06/01/2026&to=06/30/2026').set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('GET /reports/occupancy 400 — from > to', async () => {
+    const res = await request(app).get('/reports/occupancy?from=2026-12-31&to=2026-01-01').set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('POST /reports/export 400 — invalid reportType', async () => {
+    const res = await request(app).post('/reports/export').set('Authorization', `Bearer ${adminToken}`)
+      .send({ reportType: 'gop', from: '2026-01-01', to: '2026-01-31', format: 'csv' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
   test('GET /reports/adr 200 as admin', async () => {
     const res = await request(app).get('/reports/adr?from=2025-01-01&to=2025-12-31').set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);

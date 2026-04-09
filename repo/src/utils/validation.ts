@@ -23,37 +23,98 @@ export const joinGroupSchema = z.object({
   joinCode: z.string().min(1, 'Join code is required'),
 });
 
+// MM/DD/YYYY (per business prompt) and 12-hour clock formats.
+const MMDDYYYY = /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/\d{4}$/;
+const TIME_12H = /^(0?[1-9]|1[0-2]):[0-5]\d\s?(AM|PM)$/i;
+
 export const createItinerarySchema = z.object({
-  title: z.string().min(1, 'Title is required'),
-  meetupDate: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, 'meetupDate must be MM/DD/YYYY'),
-  meetupTime: z.string().min(1, 'meetupTime is required'),
-  meetupLocation: z.string().min(1, 'meetupLocation is required'),
-  idempotencyKey: z.string().min(1, 'idempotencyKey is required'),
-  notes: z.string().max(2000).optional(),
-});
+  title: z.string().trim().min(1, 'Title is required').max(255, 'Title must be ≤ 255 chars'),
+  meetupDate: z.string().regex(MMDDYYYY, 'meetupDate must be MM/DD/YYYY'),
+  meetupTime: z.string().regex(TIME_12H, 'meetupTime must be HH:MM AM/PM (12-hour)'),
+  meetupLocation: z.string().trim().min(1, 'meetupLocation is required').max(500, 'meetupLocation must be ≤ 500 chars'),
+  idempotencyKey: z.string().trim().min(1, 'idempotencyKey is required').max(255, 'idempotencyKey must be ≤ 255 chars'),
+  notes: z.string().max(2000, 'notes must be ≤ 2000 chars').optional(),
+}).strict();
 
 export const updateItinerarySchema = z.object({
-  idempotencyKey: z.string().min(1, 'idempotencyKey is required'),
-  title: z.string().optional(),
-  meetupDate: z.string().optional(),
-  meetupTime: z.string().optional(),
-  meetupLocation: z.string().optional(),
+  idempotencyKey: z.string().trim().min(1, 'idempotencyKey is required').max(255),
+  title: z.string().trim().min(1).max(255).optional(),
+  meetupDate: z.string().regex(MMDDYYYY, 'meetupDate must be MM/DD/YYYY').optional(),
+  meetupTime: z.string().regex(TIME_12H, 'meetupTime must be HH:MM AM/PM (12-hour)').optional(),
+  meetupLocation: z.string().trim().min(1).max(500).optional(),
   notes: z.string().max(2000).optional(),
-});
+}).strict();
+
+// Checkpoints per item: position 1..30, label required.
+export const createCheckpointSchema = z.object({
+  label: z.string().trim().min(1, 'label is required').max(255),
+  position: z.number().int().min(1).max(30, 'position must be 1..30'),
+  description: z.string().max(2000).optional(),
+}).strict();
+
+export const updateCheckpointSchema = z.object({
+  label: z.string().trim().min(1).max(255).optional(),
+  position: z.number().int().min(1).max(30).optional(),
+  description: z.string().max(2000).optional(),
+}).strict();
 
 export const importUploadSchema = z.object({
   datasetType: z.enum(['staffing', 'evaluation']),
 });
 
-export const reportExportSchema = z.object({
-  reportType: z.enum(['occupancy', 'adr', 'revpar', 'revenue_mix']),
-  from: z.string().min(1),
-  to: z.string().min(1),
-  format: z.enum(['csv', 'excel']),
-  groupBy: z.string().optional(),
-  propertyId: z.string().optional(),
-  includePii: z.boolean().optional(),
-});
+// Reusable date / range constraints for reports.
+//
+// We accept two date formats so the schema is forgiving but strict:
+//   - YYYY-MM-DD (server-side canonical)
+//   - MM/DD/YYYY (matches the rest of the API's display convention)
+// Both are normalized to YYYY-MM-DD before being sent to SQL.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+const reportDate = z.string().regex(ISO_DATE, 'date must be YYYY-MM-DD');
+const reportGroupBy = z.enum(['day', 'week', 'month']);
+const reportType   = z.enum(['occupancy', 'adr', 'revpar', 'revenue_mix']);
+const reportFormat = z.enum(['csv', 'excel']);
+const propertyIdSchema = z.string().min(1).max(64);
+
+export const reportQuerySchema = z
+  .object({
+    from: reportDate,
+    to: reportDate,
+    groupBy: reportGroupBy.optional(),
+    propertyId: propertyIdSchema.optional(),
+    roomType: z.string().min(1).max(100).optional(),
+  })
+  .refine((v) => v.from <= v.to, {
+    message: 'from must be on or before to',
+    path: ['from'],
+  });
+
+export const revenueMixQuerySchema = z
+  .object({
+    from: reportDate,
+    to: reportDate,
+    groupBy: z.enum(['channel', 'room_type']).optional(),
+    propertyId: propertyIdSchema.optional(),
+  })
+  .refine((v) => v.from <= v.to, {
+    message: 'from must be on or before to',
+    path: ['from'],
+  });
+
+export const reportExportSchema = z
+  .object({
+    reportType,
+    from: reportDate,
+    to: reportDate,
+    format: reportFormat,
+    groupBy: reportGroupBy.optional(),
+    propertyId: propertyIdSchema.optional(),
+    includePii: z.boolean().optional(),
+  })
+  .refine((v) => v.from <= v.to, {
+    message: 'from must be on or before to',
+    path: ['from'],
+  });
 
 // --- Account profile (/accounts/me) ---------------------------------------
 // The prompt frames users as US-based customers; we enforce:

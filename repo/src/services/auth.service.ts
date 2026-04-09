@@ -279,7 +279,7 @@ export async function deleteAccount(userId: string, password: string): Promise<v
 
 export async function exportData(
   userId: string
-): Promise<{ downloadUrl: string }> {
+): Promise<{ downloadUrl: string; expiresAt: string }> {
   const user = await User.findByPk(userId, {
     attributes: { exclude: ['password_hash'] },
   });
@@ -309,17 +309,23 @@ export async function exportData(
 
   return new Promise((resolve, reject) => {
     output.on('close', async () => {
-      // Register export ownership record
+      // Register export ownership record. expiresAt is exposed in the
+      // response so the caller knows the download window without
+      // having to query the export records table.
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
       await ExportRecord.create({
         id: exportId, user_id: userId, filename,
         export_type: 'account_data',
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        expires_at: expiresAt,
         created_at: new Date(),
       });
       await logActivity(userId, 'export_data', { filename });
       await logAudit(userId, 'export_data', 'user', userId, { filename });
       authLogger.info('Data exported', { userId, filename });
-      resolve({ downloadUrl: `/exports/${filename}` });
+      resolve({
+        downloadUrl: `/exports/${filename}`,
+        expiresAt: expiresAt.toISOString(),
+      });
     });
 
     archive.on('error', (err: Error) => reject(err));

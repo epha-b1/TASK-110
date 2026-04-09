@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { ItineraryItem, ItineraryCheckpoint, MemberCheckin } from '../models/itinerary.model';
 import { GroupMember, GroupRequiredField, MemberFieldValue } from '../models/group.model';
@@ -5,6 +6,20 @@ import { AppError, ErrorCodes } from '../utils/errors';
 import { emitNotification } from './notification.service';
 import { checkIdempotency, storeIdempotency } from './idempotency.service';
 import { sequelize } from '../config/database';
+
+// Hash the relevant create-payload fields for idempotency conflict
+// detection. We deliberately exclude `idempotencyKey` itself so two
+// requests with the same key always match by content alone.
+function hashCreateBody(data: { title: string; meetupDate: string; meetupTime: string; meetupLocation: string; notes?: string }): string {
+  const normalized = JSON.stringify({
+    title: data.title,
+    meetupDate: data.meetupDate,
+    meetupTime: data.meetupTime,
+    meetupLocation: data.meetupLocation,
+    notes: data.notes ?? null,
+  });
+  return crypto.createHash('sha256').update(normalized).digest('hex');
+}
 
 const DATE_REGEX = /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/\d{4}$/;
 const TIME_REGEX = /^(0?[1-9]|1[0-2]):[0-5]\d\s?(AM|PM)$/i;
@@ -54,9 +69,38 @@ export async function createItem(groupId: string, userId: string, data: {
   await assertGroupMember(groupId, userId);
   validateItem(data);
 
-  // Idempotency: return existing if key matches
-  const existing = await ItineraryItem.findOne({ where: { idempotency_key: data.idempotencyKey } });
-  if (existing) return existing;
+  // Idempotency lookup is strictly scoped to (group_id, created_by,
+  // idempotency_key) so a key reused across groups or across users is
+  // never matched as a "replay" of a foreign item. This matches the
+  // composite unique index installed by migration 018.
+  const existing = await ItineraryItem.findOne({
+    where: {
+      group_id: groupId,
+      created_by: userId,
+      idempotency_key: data.idempotencyKey,
+    },
+  });
+  if (existing) {
+    // Replay only if the request body matches the original. A repeat
+    // request with the same key but a different payload is a 409 — it
+    // signals client confusion, not a retry, and silently returning
+    // the old item would lose data.
+    const existingHash = hashCreateBody({
+      title: existing.title,
+      meetupDate: existing.meetup_date,
+      meetupTime: existing.meetup_time,
+      meetupLocation: existing.meetup_location,
+      notes: existing.notes ?? undefined,
+    });
+    if (existingHash !== hashCreateBody(data)) {
+      throw new AppError(
+        409,
+        'IDEMPOTENCY_CONFLICT',
+        'Idempotency key already used with a different request body'
+      );
+    }
+    return existing;
+  }
 
   const t = await sequelize.transaction();
   try {
@@ -75,7 +119,25 @@ export async function createItem(groupId: string, userId: string, data: {
       detail: { title: data.title }, idempotencyKey: `item_created:${item.id}`,
     });
     return item;
-  } catch (err) { await t.rollback(); throw err; }
+  } catch (err) {
+    await t.rollback();
+    // If the unique index races (two concurrent identical requests
+    // from the same scope), the second will hit the index and we
+    // should re-fetch and replay rather than crash. Sequelize raises
+    // SequelizeUniqueConstraintError for this case.
+    const errName = (err as { name?: string })?.name;
+    if (errName === 'SequelizeUniqueConstraintError') {
+      const raced = await ItineraryItem.findOne({
+        where: {
+          group_id: groupId,
+          created_by: userId,
+          idempotency_key: data.idempotencyKey,
+        },
+      });
+      if (raced) return raced;
+    }
+    throw err;
+  }
 }
 
 export async function listItems(groupId: string, userId: string) {

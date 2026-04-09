@@ -10,11 +10,27 @@ services:
       DB_USER: hospitality
       DB_PASSWORD: hospitality
       DB_NAME: hospitality
-      JWT_SECRET: change_me_in_production
-      ENCRYPTION_KEY: change_me_32_chars_minimum_here_x
+      # JWT_SECRET and ENCRYPTION_KEY are deliberately NOT hardcoded to
+      # demo values. The application validates them at boot when
+      # NODE_ENV=production and refuses to start with insecure or
+      # default values (see src/config/environment.ts).
+      #
+      # For local development you can either:
+      #   1) Run with NODE_ENV=development (the default if unset)
+      #      → boot validation is bypassed; demo defaults are accepted
+      #   2) Pass strong secrets via the host environment, e.g.
+      #      JWT_SECRET=$(openssl rand -hex 32) \
+      #      ENCRYPTION_KEY=$(openssl rand -hex 32) \
+      #      docker compose up --build
+      #
+      # For production deployments, set both via your secret manager
+      # (Docker secrets, k8s secrets, .env file, etc.) and require
+      # NODE_ENV=production so the validator runs.
+      JWT_SECRET: ${JWT_SECRET:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       JWT_TTL: "28800"
       PORT: "3000"
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-development}
     depends_on:
       db:
         condition: service_healthy

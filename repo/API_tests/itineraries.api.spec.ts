@@ -45,6 +45,24 @@ describeDb('Slice 5 — Itineraries API', () => {
     const res = await request(app).post(`/groups/${groupId}/itineraries`).set('Authorization', `Bearer ${adminToken}`)
       .send({ title: 'Bad', meetupDate: '2025-12-25', meetupTime: '9:30 AM', meetupLocation: 'X', idempotencyKey: 'bad-date' });
     expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('POST create 400 — missing required field (title)', async () => {
+    const res = await request(app).post(`/groups/${groupId}/itineraries`).set('Authorization', `Bearer ${adminToken}`)
+      .send({ meetupDate: '12/25/2025', meetupTime: '9:30 AM', meetupLocation: 'X', idempotencyKey: 'no-title' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('POST create 400 — strict schema rejects unknown field', async () => {
+    const res = await request(app).post(`/groups/${groupId}/itineraries`).set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        title: 'X', meetupDate: '12/25/2025', meetupTime: '9:30 AM',
+        meetupLocation: 'X', idempotencyKey: 'unk', unknownField: 'leak',
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
   });
 
   test('POST create 400 — bad time format', async () => {
@@ -154,5 +172,159 @@ describeDb('Slice 5 — Itineraries API', () => {
       .send({ label: 'Duplicate Pos', position: 1 });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('CONFLICT');
+  });
+
+  // ─── Cross-tenant idempotency isolation (audit fix) ─────────────────
+  describe('Idempotency scoping — cross-tenant isolation', () => {
+    test('same key in DIFFERENT groups → distinct items, no replay leak', async () => {
+      const sharedKey = `cross-group-key-${RUN_ID}`;
+
+      // Group A: admin creates an item with `sharedKey`
+      const gA = await request(app).post('/groups')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Iso A ${RUN_ID}` });
+      const groupAId: string = gA.body.id;
+
+      const itemA = await request(app)
+        .post(`/groups/${groupAId}/itineraries`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          title: 'Item in group A',
+          meetupDate: '06/01/2026',
+          meetupTime: '9:00 AM',
+          meetupLocation: 'Lobby A',
+          idempotencyKey: sharedKey,
+        });
+      expect(itemA.status).toBe(201);
+      expect(itemA.body.title).toBe('Item in group A');
+
+      // Group B: same admin reuses the key with a DIFFERENT body. The
+      // global-unique bug would make this either replay group A's row
+      // (returning the wrong title) or 409. The fix returns a fresh
+      // row with the new title.
+      const gB = await request(app).post('/groups')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Iso B ${RUN_ID}` });
+      const groupBId: string = gB.body.id;
+
+      const itemB = await request(app)
+        .post(`/groups/${groupBId}/itineraries`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          title: 'Item in group B',
+          meetupDate: '07/01/2026',
+          meetupTime: '10:00 AM',
+          meetupLocation: 'Lobby B',
+          idempotencyKey: sharedKey,
+        });
+      expect(itemB.status).toBe(201);
+      expect(itemB.body.title).toBe('Item in group B');
+      expect(itemB.body.id).not.toBe(itemA.body.id);
+      expect(itemB.body.group_id).toBe(groupBId);
+    });
+
+    test('same key, same group, DIFFERENT users → distinct items, no replay leak', async () => {
+      // Set up a single group with two members
+      const g = await request(app).post('/groups')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Iso Cross-User ${RUN_ID}` });
+      const isoGroupId: string = g.body.id;
+      await request(app).post('/groups/join')
+        .set('Authorization', `Bearer ${memberToken}`)
+        .send({ joinCode: g.body.join_code });
+
+      const sharedKey = `cross-user-key-${RUN_ID}`;
+
+      // Admin creates first
+      const adminItem = await request(app)
+        .post(`/groups/${isoGroupId}/itineraries`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          title: 'Admin item',
+          meetupDate: '03/01/2026',
+          meetupTime: '8:00 AM',
+          meetupLocation: 'Loc A',
+          idempotencyKey: sharedKey,
+        });
+      expect(adminItem.status).toBe(201);
+
+      // Member uses same key in same group → should NOT replay admin's item
+      const memberItem = await request(app)
+        .post(`/groups/${isoGroupId}/itineraries`)
+        .set('Authorization', `Bearer ${memberToken}`)
+        .send({
+          title: 'Member item',
+          meetupDate: '03/02/2026',
+          meetupTime: '9:00 AM',
+          meetupLocation: 'Loc B',
+          idempotencyKey: sharedKey,
+        });
+      expect(memberItem.status).toBe(201);
+      expect(memberItem.body.title).toBe('Member item');
+      expect(memberItem.body.id).not.toBe(adminItem.body.id);
+      expect(memberItem.body.created_by).not.toBe(adminItem.body.created_by);
+    });
+
+    test('same key + same scope + SAME body → idempotent replay', async () => {
+      const g = await request(app).post('/groups')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Iso Replay ${RUN_ID}` });
+      const replayGroupId: string = g.body.id;
+      const replayKey = `replay-key-${RUN_ID}`;
+
+      const body = {
+        title: 'Replay item',
+        meetupDate: '04/01/2026',
+        meetupTime: '8:00 AM',
+        meetupLocation: 'Lobby',
+        idempotencyKey: replayKey,
+      };
+
+      const first = await request(app)
+        .post(`/groups/${replayGroupId}/itineraries`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(body);
+      expect(first.status).toBe(201);
+
+      const second = await request(app)
+        .post(`/groups/${replayGroupId}/itineraries`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(body);
+      expect(second.status).toBe(201);
+      expect(second.body.id).toBe(first.body.id);
+    });
+
+    test('same key + same scope + DIFFERENT body → 409 IDEMPOTENCY_CONFLICT', async () => {
+      const g = await request(app).post('/groups')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Iso Conflict ${RUN_ID}` });
+      const conflictGroupId: string = g.body.id;
+      const conflictKey = `conflict-key-${RUN_ID}`;
+
+      const first = await request(app)
+        .post(`/groups/${conflictGroupId}/itineraries`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          title: 'Original',
+          meetupDate: '05/01/2026',
+          meetupTime: '8:00 AM',
+          meetupLocation: 'Lobby',
+          idempotencyKey: conflictKey,
+        });
+      expect(first.status).toBe(201);
+
+      const conflict = await request(app)
+        .post(`/groups/${conflictGroupId}/itineraries`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          title: 'Different title',
+          meetupDate: '05/01/2026',
+          meetupTime: '8:00 AM',
+          meetupLocation: 'Lobby',
+          idempotencyKey: conflictKey,
+        });
+      expect(conflict.status).toBe(409);
+      expect(conflict.body.code).toBe('IDEMPOTENCY_CONFLICT');
+    });
   });
 });

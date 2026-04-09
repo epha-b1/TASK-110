@@ -25,10 +25,30 @@ ItineraryItem.init({
   notes: { type: DataTypes.TEXT, allowNull: true },
   meetup_sort_at: { type: DataTypes.DATE, allowNull: true },
   created_by: { type: DataTypes.STRING(36), allowNull: false },
-  idempotency_key: { type: DataTypes.STRING(255), allowNull: false, unique: true },
+  // idempotency_key is NOT globally unique. Uniqueness is enforced at
+  // the DB layer by the composite index
+  // (group_id, created_by, idempotency_key) — see migration 018. The
+  // model declaration only enforces presence; the composite index is
+  // declared in the model `indexes` option below to keep schema sync
+  // (`sequelize.sync()` for tests) consistent with the migration.
+  idempotency_key: { type: DataTypes.STRING(255), allowNull: false },
   created_at: { type: DataTypes.DATE, allowNull: false },
   updated_at: { type: DataTypes.DATE, allowNull: false },
-}, { sequelize, tableName: 'itinerary_items', timestamps: true, underscored: true, createdAt: 'created_at', updatedAt: 'updated_at' });
+}, {
+  sequelize,
+  tableName: 'itinerary_items',
+  timestamps: true,
+  underscored: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
+  indexes: [
+    {
+      name: 'idx_itinerary_items_scope_idempotency',
+      unique: true,
+      fields: ['group_id', 'created_by', 'idempotency_key'],
+    },
+  ],
+});
 
 export interface CheckpointAttributes {
   id: string; item_id: string; position: number; label: string; description: string | null; created_at: Date;

@@ -14,21 +14,47 @@ async function createTestExcel(columns: string[], rows: string[][]): Promise<Buf
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
+let memberToken: string;
+let managerToken: string;
+
 describeDb('Slice 9 — Import API', () => {
   beforeAll(async () => {
     await sequelize.authenticate();
     adminToken = (await request(app).post('/auth/login').send({ username: 'admin', password: 'Admin1!pass' })).body.accessToken;
+    memberToken = (await request(app).post('/auth/login').send({ username: 'member1', password: 'Member1!pass' })).body.accessToken;
+    managerToken = (await request(app).post('/auth/login').send({ username: 'manager1', password: 'Manager1!pass' })).body.accessToken;
   });
   afterAll(async () => { await sequelize.close(); });
 
-  test('GET /import/templates/staffing 200 — downloads template', async () => {
+  // ─── Import templates authorization (audit fix) ────────────────────
+  test('GET /import/templates/staffing 401 — unauthenticated rejected', async () => {
     const res = await request(app).get('/import/templates/staffing');
+    expect(res.status).toBe(401);
+  });
+
+  test('GET /import/templates/staffing 403 — member rejected', async () => {
+    const res = await request(app).get('/import/templates/staffing')
+      .set('Authorization', `Bearer ${memberToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('GET /import/templates/staffing 200 — manager allowed', async () => {
+    const res = await request(app).get('/import/templates/staffing')
+      .set('Authorization', `Bearer ${managerToken}`);
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('spreadsheet');
   });
 
-  test('GET /import/templates/evaluation 200', async () => {
-    const res = await request(app).get('/import/templates/evaluation');
+  test('GET /import/templates/staffing 200 — admin allowed', async () => {
+    const res = await request(app).get('/import/templates/staffing')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('spreadsheet');
+  });
+
+  test('GET /import/templates/evaluation 200 — admin allowed', async () => {
+    const res = await request(app).get('/import/templates/evaluation')
+      .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
   });
 

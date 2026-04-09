@@ -33,6 +33,10 @@ module.exports = {
       // result in DB_AVAILABLE so specs can skip cleanly instead of
       // crashing with ECONNREFUSED. See API_tests/global-setup.ts.
       globalSetup: '<rootDir>/API_tests/global-setup.ts',
+      // Per-suite teardown closes the winston console transport so the
+      // worker process can exit cleanly. Same teardown as the unit
+      // project — see unit_tests/jest.setup.ts.
+      setupFilesAfterEnv: ['<rootDir>/unit_tests/jest.setup.ts'],
     },
   ],
 };

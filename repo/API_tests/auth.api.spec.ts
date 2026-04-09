@@ -183,13 +183,23 @@ describeDb('Slice 2 — Auth API', () => {
   });
 
   describe('POST /accounts/me/export', () => {
-    test('200 — returns downloadUrl', async () => {
+    test('200 — returns downloadUrl AND expiresAt (spec contract)', async () => {
       const res = await request(app)
         .post('/accounts/me/export')
         .set('Authorization', `Bearer ${authToken}`);
       expect(res.status).toBe(200);
       expect(res.body.downloadUrl).toBeDefined();
       expect(res.body.downloadUrl).toMatch(/^\/exports\//);
+
+      // Spec drift fix: response must include expiresAt as ISO 8601.
+      expect(res.body.expiresAt).toBeDefined();
+      expect(typeof res.body.expiresAt).toBe('string');
+      const exp = new Date(res.body.expiresAt);
+      expect(Number.isNaN(exp.getTime())).toBe(false);
+      // Window is 24h ± a small slack
+      const now = Date.now();
+      expect(exp.getTime()).toBeGreaterThan(now + 23 * 60 * 60 * 1000);
+      expect(exp.getTime()).toBeLessThanOrEqual(now + 25 * 60 * 60 * 1000);
     });
   });
 

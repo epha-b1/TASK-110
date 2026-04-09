@@ -84,7 +84,22 @@ export const openApiSpec = {
       requestBody: { required: true, content: { 'application/json': { schema: obj({ password: str }) } } },
       responses: ok(),
     }),
-    '/accounts/me/export': endpoint('post', 'Accounts', 'Export own data as ZIP', { responses: ok() }),
+    '/accounts/me/export': endpoint('post', 'Accounts', 'Export own data as ZIP', {
+      responses: {
+        '200': {
+          description: 'Export ready',
+          content: {
+            'application/json': {
+              schema: obj({
+                downloadUrl: { type: 'string', example: '/exports/export-<userId>-<id>.zip' },
+                expiresAt: { type: 'string', format: 'date-time', example: '2026-04-10T12:34:56.000Z' },
+              }),
+            },
+          },
+        },
+        ...r401,
+      },
+    }),
 
     // ── Users (Admin) ──
     '/users': endpoint('get', 'Users', 'List all users (admin only)', {
@@ -217,9 +232,9 @@ export const openApiSpec = {
     }),
 
     // ── Import ──
-    '/import/templates/{datasetType}': pub('get', 'Import', 'Download Excel template', {
+    '/import/templates/{datasetType}': endpoint('get', 'Import', 'Download Excel template (hotel_admin or manager)', {
       parameters: params({ name: 'datasetType', in_: 'path', schema: { type: 'string', enum: ['staffing', 'evaluation'] } }),
-      responses: ok(),
+      responses: { ...ok(), ...r401, ...r403 },
     }),
     '/import/upload': endpoint('post', 'Import', 'Upload and validate Excel file', {
       requestBody: { required: true, content: { 'multipart/form-data': { schema: obj({ file: { type: 'string', format: 'binary' }, datasetType: str }) } } },

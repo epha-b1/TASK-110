@@ -3,23 +3,46 @@
 Offline-first backend API for hotel group itinerary coordination, operational
 reporting, staffing imports, face enrollment, and audit-grade logging.
 
-## Quick Start
+## Quick Start (development)
 
 ```bash
 docker compose up --build
 ```
 
-`docker-compose.yml` injects all required env vars (DB, JWT, encryption key)
-into the `api` container, so a local `.env` file is not needed for the
-default dev flow. If you want to run `npm run dev` outside Docker, copy the
-template:
+The bundled `docker-compose.yml` defaults `NODE_ENV=development` and
+provides the DB credentials inline. JWT_SECRET and ENCRYPTION_KEY are
+NOT hardcoded — see "Production secrets" below for why.
+
+If you want to run `npm run dev` outside Docker, copy the template:
 
 ```bash
 cp .env.example .env
 ```
 
 `.env.example` lists every variable the service reads (`DB_*`, `JWT_*`,
-`ENCRYPTION_KEY`, `PORT`, optional `RATE_LIMIT_*`).
+`ENCRYPTION_KEY`, `PORT`, optional `RATE_LIMIT_*`,
+`AUDIT_MAINTAINER_*`).
+
+## Production secrets (fail-fast)
+
+When `NODE_ENV=production`, the application validates `JWT_SECRET`,
+`ENCRYPTION_KEY` and `DB_PASSWORD` at startup and **refuses to boot**
+if any of them are empty, too short, or set to a known weak default.
+The validator lives in `src/config/environment.ts` and is exercised
+by `unit_tests/env-validation.spec.ts`.
+
+To run a production deployment via the bundled compose file:
+
+```bash
+NODE_ENV=production \
+JWT_SECRET=$(openssl rand -hex 32) \
+ENCRYPTION_KEY=$(openssl rand -hex 32) \
+docker compose up --build
+```
+
+Without those vars set, the production container will exit with a
+fatal banner listing every problem. This is intentional — it prevents
+a misconfigured deployment from running with throwaway credentials.
 
 ## Ports
 
