@@ -21,6 +21,21 @@ function getManagerScope(req: AuthenticatedRequest): string | undefined {
   return undefined;
 }
 
+/**
+ * Serialize a list of report rows to a CSV string suitable for writing
+ * to disk. Extracted from exportReport so the safety properties (RFC
+ * 4180 quoting + formula injection neutralization) can be unit-tested
+ * without spinning up the full controller.
+ *
+ * Returns an empty string when there are no rows so the caller can
+ * still create an empty file.
+ */
+export function serializeReportRowsToCsv(rows: Record<string, unknown>[]): string {
+  if (rows.length === 0) return '';
+  const columns = Object.keys(rows[0]);
+  return objectsToCsv(rows, columns);
+}
+
 export async function occupancy(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const scope = getManagerScope(req);
@@ -85,18 +100,14 @@ export async function exportReport(req: AuthenticatedRequest, res: Response, nex
       }
       await wb.xlsx.writeFile(filePath);
     } else {
-      // CSV — route through objectsToCsv so every cell is properly quoted
-      // (commas / newlines / embedded quotes) and values that begin with
-      // formula-trigger characters (=, +, -, @) are neutralized against
-      // spreadsheet formula injection. See src/utils/csv.ts.
+      // CSV — serialized via serializeReportRowsToCsv → objectsToCsv so
+      // every cell is properly quoted (commas / newlines / embedded
+      // quotes) and values that begin with formula-trigger characters
+      // (=, +, -, @) are neutralized against spreadsheet formula
+      // injection. See src/utils/csv.ts.
       filename = `report-${reportType}-${exportId}.csv`;
       filePath = path.resolve('exports', filename);
-      if (rows.length === 0) {
-        fs.writeFileSync(filePath, '');
-      } else {
-        const columns = Object.keys(rows[0]);
-        fs.writeFileSync(filePath, objectsToCsv(rows, columns));
-      }
+      fs.writeFileSync(filePath, serializeReportRowsToCsv(rows));
     }
 
     // Log export metadata to audit_logs

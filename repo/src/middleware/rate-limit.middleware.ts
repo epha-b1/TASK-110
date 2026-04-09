@@ -36,6 +36,24 @@ export const generalLimiter = rateLimit({
   message: { statusCode: 429, code: 'RATE_LIMITED', message: 'Too many requests, please try again later' },
 });
 
+/**
+ * Per-user rate-limit key generator. Exported so unit tests can pin the
+ * exact bucketing semantics:
+ *   - authenticated request → `user:<id>` bucket (the intended path)
+ *   - missing/invalid req.user → `ip:<ip>` bucket (fallback for misuse)
+ *   - missing IP → `ip:unknown` (defensive)
+ *
+ * The fallback behavior is preserved on purpose so the limiter never
+ * silently disappears when the middleware is mounted out of order — it
+ * degrades to per-IP, which is still a real bucket. Mounting order is
+ * verified separately by the route smoke test.
+ */
+export function userLimiterKey(req: { ip?: string }): string {
+  const authReq = req as AuthenticatedRequest;
+  if (authReq.user?.id) return `user:${authReq.user.id}`;
+  return `ip:${req.ip || 'unknown'}`;
+}
+
 // Per-authenticated-user limiter. Must be mounted AFTER authMiddleware so
 // req.user is populated. If it is accidentally mounted before auth (and
 // therefore has no user), it falls back to the IP key — but that is a
@@ -45,13 +63,7 @@ export const userLimiter = rateLimit({
   max: parseInt(process.env.RATE_LIMIT_USER || '200', 10),
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => {
-    const authReq = req as AuthenticatedRequest;
-    // req.user.id is the authoritative per-user key. Fallback to IP only
-    // covers the degenerate case where this limiter is mistakenly mounted
-    // before auth; in production it should never be reached.
-    return authReq.user?.id ? `user:${authReq.user.id}` : `ip:${req.ip || 'unknown'}`;
-  },
+  keyGenerator: userLimiterKey,
   message: { statusCode: 429, code: 'RATE_LIMITED', message: 'Too many requests, please slow down' },
 });
 

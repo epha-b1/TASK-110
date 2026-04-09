@@ -174,26 +174,48 @@ describeDb('Slice 8 — Reports API', () => {
     expect(res.status).toBe(403);
   });
 
-  test('GET /reports/evaluations scopes results by manager property — admin vs manager differ', async () => {
-    // As admin: no scope → full result set.
-    // As manager: forced to own property → a subset (possibly empty).
-    // The key assertion is that the manager query is strictly scoped by
-    // the service's EXISTS(...staffing_records) filter rather than
-    // returning every row like the unscoped admin query.
-    const adminRes = await request(app)
-      .get('/reports/evaluations')
-      .set('Authorization', `Bearer ${adminToken}`);
+  test('GET /reports/evaluations — manager sees own property bucket but NOT other property bucket', async () => {
+    // The fixture seeded two distinct evaluation rows tagged with
+    // RUN_TAG: ISO_PASS_<tag> on property 1, ISO_FAIL_<tag> on property 2.
+    // A correctly scoped manager query MUST contain ISO_PASS and MUST
+    // NOT contain ISO_FAIL. This is a strict assertion that would fail
+    // if the property filter were silently dropped from evaluationReport.
     const managerRes = await request(app)
       .get('/reports/evaluations')
       .set('Authorization', `Bearer ${managerToken}`);
-    expect(adminRes.status).toBe(200);
     expect(managerRes.status).toBe(200);
-    // Manager output cardinality must be <= admin's — if seed data is
-    // present this inequality is strict; if empty it's an equality.
-    // Either way it proves the filter is wired through (not ignored).
-    const adminBuckets = (adminRes.body.resultsSummary || []).length;
-    const managerBuckets = (managerRes.body.resultsSummary || []).length;
-    expect(managerBuckets).toBeLessThanOrEqual(adminBuckets);
+
+    const buckets = (managerRes.body.resultsSummary || []) as Array<{ result: string }>;
+    const labels = buckets.map((b) => b.result);
+
+    expect(labels).toContain(`ISO_PASS_${RUN_TAG}`);
+    expect(labels).not.toContain(`ISO_FAIL_${RUN_TAG}`);
+  });
+
+  test('GET /reports/evaluations — admin sees BOTH property buckets', async () => {
+    // Admin has no scope, so both seeded rows must be visible. This is
+    // the parity assertion that proves the manager test above is testing
+    // a real scope difference, not a fixture defect.
+    const adminRes = await request(app)
+      .get('/reports/evaluations')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(adminRes.status).toBe(200);
+    const buckets = (adminRes.body.resultsSummary || []) as Array<{ result: string }>;
+    const labels = buckets.map((b) => b.result);
+    expect(labels).toContain(`ISO_PASS_${RUN_TAG}`);
+    expect(labels).toContain(`ISO_FAIL_${RUN_TAG}`);
+  });
+
+  test('GET /reports/evaluations?propertyId=<other> as admin — only that property visible', async () => {
+    // Admin opting into a property scope should see ONLY that property's
+    // evaluations. Property 2 has ISO_FAIL but not ISO_PASS.
+    const res = await request(app)
+      .get(`/reports/evaluations?propertyId=${PROPERTY_2_ID}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    const labels = (res.body.resultsSummary || []).map((b: any) => b.result);
+    expect(labels).toContain(`ISO_FAIL_${RUN_TAG}`);
+    expect(labels).not.toContain(`ISO_PASS_${RUN_TAG}`);
   });
 
   // --- Fix A: export ownership enforcement ---

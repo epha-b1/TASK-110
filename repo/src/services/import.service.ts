@@ -15,22 +15,41 @@ const logger = createCategoryLogger('import');
 // artifacts (which may contain PII) never leak into the download path.
 // The directory is auto-created on first use and all files written here
 // follow the `.import-<batchId>.json` naming convention.
-const IMPORT_TMP_DIR = path.resolve('var/import-tmp');
-
-function ensureTmpDir(): void {
-  if (!fs.existsSync(IMPORT_TMP_DIR)) fs.mkdirSync(IMPORT_TMP_DIR, { recursive: true });
+//
+// Why a getter, not a const? Tests change `process.cwd()` to a temp dir
+// to exercise cleanup in isolation. A captured-once `path.resolve` would
+// freeze the path at module load time and be wrong inside those tests.
+// Production code only ever calls this once per request so the small
+// overhead is irrelevant.
+export const IMPORT_TMP_SUBDIR = 'var/import-tmp';
+export function getImportTmpDir(): string {
+  return path.resolve(IMPORT_TMP_SUBDIR);
 }
 
-function tmpFilePath(batchId: string): string {
-  // Accept only UUID-shaped batch ids to defeat path traversal. The caller
-  // always supplies a uuidv4 from crypto, but a defensive check here keeps
-  // the boundary explicit.
+function ensureTmpDir(): void {
+  const dir = getImportTmpDir();
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+/**
+ * Build the absolute filesystem path for a batch's staging file. Two
+ * defenses against path injection:
+ *   1) batchId must match the UUID v4 lexical shape — anything else
+ *      throws a 400 immediately.
+ *   2) the resolved path must start with the staging directory + sep,
+ *      so any clever escape (e.g. embedded `..`) cannot escape the
+ *      sandbox even if it satisfied the regex.
+ *
+ * Exported for unit testing — production callers should not need to
+ * import it directly.
+ */
+export function tmpFilePath(batchId: string): string {
   if (!/^[0-9a-fA-F-]{36}$/.test(batchId)) {
     throw new AppError(400, 'VALIDATION_ERROR', 'Invalid batch id');
   }
-  const full = path.resolve(IMPORT_TMP_DIR, `.import-${batchId}.json`);
-  // Enforce directory containment — resolved path must start with the tmp dir.
-  if (!full.startsWith(IMPORT_TMP_DIR + path.sep)) {
+  const dir = getImportTmpDir();
+  const full = path.resolve(dir, `.import-${batchId}.json`);
+  if (!full.startsWith(dir + path.sep)) {
     throw new AppError(400, 'VALIDATION_ERROR', 'Invalid batch id');
   }
   return full;
@@ -235,18 +254,30 @@ export async function getBatch(batchId: string, userId: string) {
  * Remove stale import temp files that were written but never committed.
  * A file is stale when its mtime is older than `maxAgeMs` (default 24h).
  * Returns the number of files deleted. Safe to call with a missing tmp dir.
+ *
+ * Deterministic behavior:
+ *   - Only files whose name starts with `.import-` AND ends with `.json`
+ *     are considered. Anything else in the directory is left alone.
+ *   - Each file's age is computed from its mtime against the same cutoff
+ *     so the result is independent of iteration order.
+ *   - The function never traverses into subdirectories (no recursion).
  */
 export function cleanupStaleImportTmp(maxAgeMs: number = 24 * 60 * 60 * 1000): number {
-  if (!fs.existsSync(IMPORT_TMP_DIR)) return 0;
+  const dir = getImportTmpDir();
+  if (!fs.existsSync(dir)) return 0;
   const cutoff = Date.now() - maxAgeMs;
   let deleted = 0;
-  for (const name of fs.readdirSync(IMPORT_TMP_DIR)) {
+  for (const name of fs.readdirSync(dir)) {
     // Only touch files that match the batch temp pattern — never other
     // files that may land here by accident.
     if (!name.startsWith('.import-') || !name.endsWith('.json')) continue;
-    const full = path.join(IMPORT_TMP_DIR, name);
+    const full = path.join(dir, name);
     try {
       const stat = fs.statSync(full);
+      // Skip directories defensively — readdirSync returns names only
+      // and we never recurse, but a same-named dir would otherwise be
+      // unlinked.
+      if (!stat.isFile()) continue;
       if (stat.mtimeMs < cutoff) {
         fs.unlinkSync(full);
         deleted++;
