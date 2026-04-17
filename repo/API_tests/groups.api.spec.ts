@@ -196,6 +196,47 @@ describeDb('Slice 4 — Groups API', () => {
         .send({ fieldName: 'hack_field', fieldType: 'text' });
       expect(res.status).toBe(403);
     });
+
+    // ─── DELETE /groups/:id/required-fields/:fieldId ────────────────
+    // Previously uncovered; audit-flagged gap.
+    describe('DELETE /groups/:id/required-fields/:fieldId', () => {
+      let tempFieldId: string;
+
+      test('setup — owner creates a field that will be deleted', async () => {
+        const res = await request(app)
+          .post(`/groups/${groupId}/required-fields`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ fieldName: 'deletable_field', fieldType: 'text', isRequired: false });
+        expect(res.status).toBe(201);
+        expect(res.body.field_name).toBe('deletable_field');
+        tempFieldId = res.body.id;
+      });
+
+      test('403 — member cannot delete a required-field config', async () => {
+        const res = await request(app)
+          .delete(`/groups/${groupId}/required-fields/${tempFieldId}`)
+          .set('Authorization', `Bearer ${memberToken}`);
+        expect(res.status).toBe(403);
+      });
+
+      test('204 — owner can delete a required-field config', async () => {
+        const res = await request(app)
+          .delete(`/groups/${groupId}/required-fields/${tempFieldId}`)
+          .set('Authorization', `Bearer ${adminToken}`);
+        expect(res.status).toBe(204);
+        // 204 by contract has an empty body
+        expect(res.text === '' || res.text === undefined).toBe(true);
+      });
+
+      test('list no longer contains the deleted field', async () => {
+        const list = await request(app)
+          .get(`/groups/${groupId}/required-fields`)
+          .set('Authorization', `Bearer ${memberToken}`);
+        expect(list.status).toBe(200);
+        const names: string[] = list.body.map((f: { field_name: string }) => f.field_name);
+        expect(names).not.toContain('deletable_field');
+      });
+    });
   });
 
   describe('Member field values', () => {

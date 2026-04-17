@@ -203,6 +203,83 @@ describeDb('Slice 2 — Auth API', () => {
     });
   });
 
+  // ─── PATCH /auth/change-password ──────────────────────────────────
+  //
+  // The audit flagged this endpoint as previously uncovered. We add
+  // deterministic tests here AND deliberately place them BEFORE the
+  // logout block so the `authToken` variable is still valid. Each
+  // sub-test uses a fresh locally-registered user so it does not
+  // mutate the shared `TEST_USER` credentials in a way that breaks
+  // later tests.
+  describe('PATCH /auth/change-password', () => {
+    // Register + login a fresh user, return their bearer token.
+    async function freshUser(tag: string): Promise<{ username: string; pw: string; token: string }> {
+      const username = `pw_${tag}_${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+      const pw = 'OldPass1!abc';
+      const reg = await request(app).post('/auth/register').send({ username, password: pw });
+      expect(reg.status).toBe(201);
+      const login = await request(app).post('/auth/login').send({ username, password: pw });
+      expect(login.status).toBe(200);
+      return { username, pw, token: login.body.accessToken };
+    }
+
+    // These tests chain 3-5 bcrypt operations (register hashes,
+    // login verifies, change-password verifies + hashes, post-change
+    // login verifies) so the default 5s jest timeout is tight on
+    // slower CI. Bump each test's budget to 20s.
+    const AUTH_BCRYPT_TIMEOUT_MS = 20_000;
+
+    test('200 — rotates password; old password stops working; new works', async () => {
+      const u = await freshUser('rotate');
+      const newPw = 'NewPass1!xyz';
+
+      const res = await request(app)
+        .patch('/auth/change-password')
+        .set('Authorization', `Bearer ${u.token}`)
+        .send({ currentPassword: u.pw, newPassword: newPw });
+      expect(res.status).toBe(200);
+      expect(res.body.message).toBeDefined();
+      expect(typeof res.body.message).toBe('string');
+
+      // Old password must be rejected
+      const oldLogin = await request(app).post('/auth/login').send({ username: u.username, password: u.pw });
+      expect(oldLogin.status).toBe(401);
+      expect(oldLogin.body.code).toBe('UNAUTHORIZED');
+
+      // New password succeeds
+      const newLogin = await request(app).post('/auth/login').send({ username: u.username, password: newPw });
+      expect(newLogin.status).toBe(200);
+      expect(newLogin.body.accessToken).toBeDefined();
+    }, AUTH_BCRYPT_TIMEOUT_MS);
+
+    test('400 — rejects short new password (policy: min length)', async () => {
+      const u = await freshUser('short');
+      const res = await request(app)
+        .patch('/auth/change-password')
+        .set('Authorization', `Bearer ${u.token}`)
+        .send({ currentPassword: u.pw, newPassword: 'short' });
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('VALIDATION_ERROR');
+    }, AUTH_BCRYPT_TIMEOUT_MS);
+
+    test('401 — wrong current password rejected', async () => {
+      const u = await freshUser('wrongcur');
+      const res = await request(app)
+        .patch('/auth/change-password')
+        .set('Authorization', `Bearer ${u.token}`)
+        .send({ currentPassword: 'Wrong0!pass', newPassword: 'GoodPass1!xx' });
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe('UNAUTHORIZED');
+    }, AUTH_BCRYPT_TIMEOUT_MS);
+
+    test('401 — unauthenticated request rejected', async () => {
+      const res = await request(app)
+        .patch('/auth/change-password')
+        .send({ currentPassword: 'Any1!pass', newPassword: 'Other1!pass' });
+      expect(res.status).toBe(401);
+    });
+  });
+
   describe('POST /auth/logout', () => {
     test('204 — with valid token', async () => {
       const res = await request(app)

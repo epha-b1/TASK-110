@@ -111,24 +111,60 @@ describeDb('Slice 8 — Reports API', () => {
     expect(res.body.code).toBe('VALIDATION_ERROR');
   });
 
-  test('GET /reports/adr 200 as admin', async () => {
+  test('GET /reports/adr 200 as admin — response is array of per-period ADR rows', async () => {
     const res = await request(app).get('/reports/adr?from=2025-01-01&to=2025-12-31').set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(Array.isArray(res.body)).toBe(true);
+    // Each row must expose the KPI contract: period, revenue, occupied
+    // room nights, and ADR. ADR is either a positive number or null
+    // (NULLIF guard when zero occupied nights in that bucket).
+    for (const row of res.body as Array<Record<string, unknown>>) {
+      expect(typeof row.period).toBe('string');
+      expect(Number.isFinite(Number(row.revenue_cents))).toBe(true);
+      expect(Number.isFinite(Number(row.occupied_room_nights))).toBe(true);
+      expect(row.adr_cents === null || Number.isFinite(Number(row.adr_cents))).toBe(true);
+    }
   });
 
-  test('GET /reports/revpar 200 as admin', async () => {
+  test('GET /reports/revpar 200 as admin — response is array of per-period RevPAR rows', async () => {
     const res = await request(app).get('/reports/revpar?from=2025-01-01&to=2025-12-31').set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(Array.isArray(res.body)).toBe(true);
+    for (const row of res.body as Array<Record<string, unknown>>) {
+      expect(typeof row.period).toBe('string');
+      expect(Number.isFinite(Number(row.revenue_cents))).toBe(true);
+      expect(Number.isFinite(Number(row.available_room_nights))).toBe(true);
+      expect(row.revpar_cents === null || Number.isFinite(Number(row.revpar_cents))).toBe(true);
+    }
   });
 
-  test('GET /reports/revenue-mix 200 as admin', async () => {
+  test('GET /reports/revenue-mix 200 as admin — default channel dimension, no period rollup', async () => {
     const res = await request(app).get('/reports/revenue-mix?from=2025-01-01&to=2025-12-31').set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(Array.isArray(res.body)).toBe(true);
+    for (const row of res.body as Array<Record<string, unknown>>) {
+      // Historical collapsed shape: category + totals, no period column.
+      expect(typeof row.category).toBe('string');
+      expect(Number.isFinite(Number(row.total_revenue))).toBe(true);
+      expect(Number.isFinite(Number(row.room_nights))).toBe(true);
+      expect(row.period).toBeUndefined();
+    }
   });
 
-  test('GET /reports/occupancy 200 as manager — scoped to property', async () => {
+  test('GET /reports/occupancy 200 as manager — scoped to property, returns per-period occupancy rows', async () => {
     const res = await request(app).get('/reports/occupancy?from=2025-01-01&to=2025-12-31').set('Authorization', `Bearer ${managerToken}`);
     expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(Array.isArray(res.body)).toBe(true);
+    for (const row of res.body as Array<Record<string, unknown>>) {
+      expect(typeof row.period).toBe('string');
+      expect(Number.isFinite(Number(row.available_room_nights))).toBe(true);
+      expect(Number.isFinite(Number(row.occupied_room_nights))).toBe(true);
+      expect(row.occupancy_rate === null || Number.isFinite(Number(row.occupancy_rate))).toBe(true);
+    }
   });
 
   test('GET /reports/occupancy 403 as member', async () => {

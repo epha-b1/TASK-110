@@ -157,6 +157,49 @@ describeDb('Slice 5 — Itineraries API', () => {
     expect(res.body.label).toBe('Updated Trailhead');
   });
 
+  // ─── DELETE /groups/:groupId/itineraries/:itemId/checkpoints/:checkpointId ─
+  // Previously uncovered; audit-flagged gap. Uses its own freshly
+  // created checkpoint so the earlier ordering (first checkpoint is
+  // still referenced by other tests via `checkpointId`) is preserved.
+  describe('DELETE /groups/:groupId/itineraries/:itemId/checkpoints/:checkpointId', () => {
+    let deletableId: string;
+
+    test('setup — add a checkpoint that will be deleted', async () => {
+      const res = await request(app)
+        .post(`/groups/${groupId}/itineraries/${itemId}/checkpoints`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ label: 'To-Delete', position: 25, description: 'scratch' });
+      expect(res.status).toBe(201);
+      expect(res.body.label).toBe('To-Delete');
+      expect(res.body.position).toBe(25);
+      deletableId = res.body.id;
+    });
+
+    test('403 — member cannot delete a checkpoint (service-level owner/admin gate)', async () => {
+      const res = await request(app)
+        .delete(`/groups/${groupId}/itineraries/${itemId}/checkpoints/${deletableId}`)
+        .set('Authorization', `Bearer ${memberToken}`);
+      expect(res.status).toBe(403);
+    });
+
+    test('204 — owner can delete a checkpoint', async () => {
+      const res = await request(app)
+        .delete(`/groups/${groupId}/itineraries/${itemId}/checkpoints/${deletableId}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(res.status).toBe(204);
+      expect(res.text === '' || res.text === undefined).toBe(true);
+    });
+
+    test('checkpoint list no longer contains the deleted id', async () => {
+      const list = await request(app)
+        .get(`/groups/${groupId}/itineraries/${itemId}/checkpoints`)
+        .set('Authorization', `Bearer ${memberToken}`);
+      expect(list.status).toBe(200);
+      const ids: string[] = list.body.map((c: { id: string }) => c.id);
+      expect(ids).not.toContain(deletableId);
+    });
+  });
+
   test('POST checkin 200 — no required fields', async () => {
     const res = await request(app).post(`/groups/${groupId}/itineraries/${itemId}/checkin`).set('Authorization', `Bearer ${memberToken}`);
     expect(res.status).toBe(200);

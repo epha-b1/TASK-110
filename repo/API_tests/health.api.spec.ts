@@ -69,4 +69,22 @@ describe('Slice 1 — Health API', () => {
     // Spot-check that a known path is present in the spec.
     expect(res.body.paths['/health']).toBeDefined();
   });
+
+  test('GET /api/docs/openapi.json returns the same OpenAPI 3 spec (legacy alias)', async () => {
+    // The spec is mounted on two paths so clients using either the
+    // short canonical `/docs` or the legacy `/api/docs` get identical
+    // documents. Assert byte-equivalence of the core structure.
+    const canonical = await request(app).get('/docs/openapi.json');
+    const legacy = await request(app).get('/api/docs/openapi.json');
+    expect(legacy.status).toBe(200);
+    expect(legacy.headers['content-type']).toMatch(/application\/json/);
+    expect(legacy.body.openapi).toBe(canonical.body.openapi);
+    expect(legacy.body.info?.title).toBe(canonical.body.info?.title);
+    expect(Object.keys(legacy.body.paths).sort())
+      .toEqual(Object.keys(canonical.body.paths).sort());
+    // Representative path regression check — if /health disappears
+    // from the spec the contract breaks for every downstream client.
+    expect(legacy.body.paths['/health']).toBeDefined();
+    expect(legacy.body.paths['/reports/revenue-mix']).toBeDefined();
+  });
 });

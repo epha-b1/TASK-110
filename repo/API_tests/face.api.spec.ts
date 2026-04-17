@@ -71,14 +71,51 @@ describeDb('Slice 10 — Face Enrollment API', () => {
     expect(res.body.length).toBeGreaterThanOrEqual(1);
   });
 
-  test('PATCH /face/enrollments/:id — deactivate', async () => {
-    const list = await request(app).get('/face/enrollments').set('Authorization', `Bearer ${memberToken}`);
-    const active = list.body.find((e: any) => e.status === 'active');
-    if (active) {
-      const res = await request(app).patch(`/face/enrollments/${active.id}`).set('Authorization', `Bearer ${memberToken}`)
-        .send({ status: 'deactivated' });
-      expect(res.status).toBe(200);
-      expect(res.body.status).toBe('deactivated');
+  test('PATCH /face/enrollments/:id — deactivate (deterministic: completes a fresh enrollment first)', async () => {
+    // The previous version of this test only ran the PATCH when an
+    // active enrollment happened to exist in the DB, which was
+    // non-deterministic across test runs (a prior run could have
+    // deactivated the only active row). Build a guaranteed-active
+    // enrollment here so the PATCH is always exercised.
+    const start = await request(app)
+      .post('/face/enroll/start')
+      .set('Authorization', `Bearer ${memberToken}`);
+    expect(start.status).toBe(201);
+    const freshSession = start.body.sessionId as string;
+
+    for (const [angle, blink] of [['left', '210'], ['front', '230'], ['right', '250']] as const) {
+      const cap = await request(app)
+        .post(`/face/enroll/${freshSession}/capture`)
+        .set('Authorization', `Bearer ${memberToken}`)
+        .field('angle', angle).field('blinkTimingMs', blink).field('motionScore', '0.85').field('textureScore', '0.75');
+      expect(cap.status).toBe(200);
+      expect(cap.body.livenessResult.passed).toBe(true);
     }
+
+    const complete = await request(app)
+      .post(`/face/enroll/${freshSession}/complete`)
+      .set('Authorization', `Bearer ${memberToken}`);
+    expect(complete.status).toBe(201);
+    const freshEnrollmentId = complete.body.enrollmentId as string;
+
+    // At this point the DB holds an active enrollment with the id we
+    // just captured. The PATCH must succeed and flip status to
+    // deactivated — no `if (active)` branching, always runs.
+    const res = await request(app)
+      .patch(`/face/enrollments/${freshEnrollmentId}`)
+      .set('Authorization', `Bearer ${memberToken}`)
+      .send({ status: 'deactivated' });
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(freshEnrollmentId);
+    expect(res.body.status).toBe('deactivated');
+
+    // Cross-check: the listing now reports the record as deactivated.
+    const list = await request(app)
+      .get('/face/enrollments')
+      .set('Authorization', `Bearer ${memberToken}`);
+    expect(list.status).toBe(200);
+    const row = (list.body as Array<{ id: string; status: string }>).find((e) => e.id === freshEnrollmentId);
+    expect(row).toBeDefined();
+    expect(row!.status).toBe('deactivated');
   });
 });
